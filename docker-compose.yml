@@ -1,0 +1,29 @@
+services:
+  web:
+    build:
+      context: .
+    env_file:
+      - .env
+    ports:
+      - "8500:8500"
+    volumes:
+      - ./app:/app:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: rusty
+      POSTGRES_PASSWORD: rusty
+      POSTGRES_DB: rusty
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rusty -d rusty"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    expose:
+      - "5432"

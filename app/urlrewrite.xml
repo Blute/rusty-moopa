@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<urlrewrite>
+    <!--
+      Compatibility smoke route for Moopa-style clean URL dispatch.
+      Moopa normally rewrites clean URLs to /_moopa.cfm?route=...
+      Keep this rule narrow so the rest of the harness and static files resolve normally.
+    -->
+    <rule last="true">
+        <from>^/rewrite-test$</from>
+        <to>/_moopa.cfm?route=/rewrite-test</to>
+    </rule>
+    <rule last="true">
+        <from>^/rewrite-test/(.*)$</from>
+        <to>/_moopa.cfm?route=/rewrite-test/$1</to>
+    </rule>
+</urlrewrite>
