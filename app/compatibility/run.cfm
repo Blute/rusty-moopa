@@ -174,13 +174,20 @@ jsonResult = "";
 </cfif>
 
 <cfif issue EQ "07">
+  <!-- Probe both returntype=array (07) and returntype=struct columnkey (16's
+       sibling shape). The grader now actually checks the result rather than
+       hardcoding partial: array must be an Array of length>=1 of structs. -->
   <cftry>
     <cfquery name="qShape" datasource="#dsn#" returntype="array">
       select 'alpha'::text as name, 1::int as id
     </cfquery>
     <cfscript>
-      status = "partial";
-      summary = "returntype=array produced a result. columnkey-style keyed structs still need a Moopa-specific fixture.";
+      arrayOk = isArray(qShape) AND arrayLen(qShape) GTE 1 AND isStruct(qShape[1])
+                AND structKeyExists(qShape[1], "name") AND qShape[1].name EQ "alpha";
+      status = arrayOk ? "pass" : "partial";
+      summary = arrayOk
+        ? "returntype=array returns the expected Array of row structs."
+        : "returntype=array produced a result but the shape did not match the expected Array of structs.";
       jsonResult = serializeJSON(qShape);
     </cfscript>
     <cfcatch>
@@ -194,20 +201,35 @@ jsonResult = "";
 </cfif>
 
 <cfif issue EQ "08">
+  <!-- Probe the direct SELECT * path that previously panicked the worker
+       on UUID/timestamptz columns. RustCFML v0.12.0+ deserializes UUIDs
+       to canonical-lowercase strings, timestamptz to local-TZ datetime
+       strings, JSONB to raw JSON text, NUMERIC to precision-preserving
+       strings, and PG arrays to native CFML arrays. The earlier safe
+       JSON-wrapper workaround is retained as a fallback assertion. -->
   <cftry>
+    <cfquery name="qDirect" datasource="#dsn#">
+      select id, created_at, name, label from moo_role limit 1
+    </cfquery>
     <cfquery name="qTypes" datasource="#dsn#">
       select row_to_json(r)::text as moo_role
       from (select * from moo_role limit 1) r
     </cfquery>
     <cfscript>
-      status = "partial";
-      summary = "Safe JSON-wrapper query works. Direct select * from moo_role previously connected but panicked RustCFML on UUID/timestamp deserialization, so this page avoids crashing the worker.";
-      jsonResult = serializeJSON(qTypes);
+      uuidLooksCanonical = isQuery(qDirect) AND qDirect.recordcount GTE 1
+                            AND reFind("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", qDirect.id[1]) GT 0;
+      tstzLooksCfmlDate = isQuery(qDirect) AND len(qDirect.created_at[1]) GTE 19
+                            AND reFind("^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", qDirect.created_at[1]) GT 0;
+      status = (uuidLooksCanonical AND tstzLooksCfmlDate) ? "pass" : "partial";
+      summary = status EQ "pass"
+        ? "Direct UUID/timestamptz selection deserializes to CFML-native shapes (canonical lowercase UUID and ISO-style timestamp string)."
+        : "JSON-wrapper query works, but direct UUID/timestamptz columns did not deserialize to the expected CFML shapes.";
+      jsonResult = serializeJSON({direct:qDirect, wrapped:qTypes});
     </cfscript>
     <cfcatch>
       <cfscript>
         status = "fail";
-        summary = "Even the safe JSON-wrapper query failed.";
+        summary = "Direct UUID/timestamptz query failed: " & cfcatch.message;
         jsonResult = serializeJSON(cfcatch);
       </cfscript>
     </cfcatch>
@@ -269,8 +291,29 @@ jsonResult = "";
       modernResult = probe.runModern();
       structAppend(modernResult, probe.afterModern(), true);
       structAppend(result, modernResult, true);
-      status = result.variablesHasImplicitAfter ? "fail" : "pass";
-      summary = status EQ "fail" ? "RustCFML is behaving like classic local mode: unscoped CFC assignments are written to variables and persist after the method call." : "Unscoped CFC assignments stayed local.";
+      // Grade BOTH modes independently:
+      //   classic (default): unscoped CFC assignments → variables scope
+      //   modern (localMode="modern" attr): unscoped CFC assignments → local
+      // Engine passes when classic stays classic AND modern actually goes local.
+      classicOk = (NOT result.localHasImplicit)
+                  AND result.variablesHasImplicitInside
+                  AND result.variablesHasImplicitAfter;
+      modernOk = result.localHasModernImplicit
+                 AND (NOT result.variablesHasModernImplicitInside)
+                 AND (NOT result.variablesHasModernImplicitAfter);
+      if (classicOk AND modernOk) {
+        status = "pass";
+        summary = "Both classic and modern localMode behave per spec: classic writes go to variables; modern writes stay local.";
+      } else if (modernOk) {
+        status = "partial";
+        summary = "Modern localMode works, but classic mode did not behave as expected (unscoped writes should land in variables).";
+      } else if (classicOk) {
+        status = "partial";
+        summary = "Classic mode behaves correctly, but localMode=""modern"" did not redirect unscoped writes to local.";
+      } else {
+        status = "fail";
+        summary = "Neither classic nor modern localMode produced the expected scope semantics.";
+      }
       jsonResult = serializeJSON(result);
     } catch (any e) {
       status = "fail";
@@ -461,24 +504,46 @@ jsonResult = "";
 </cfif>
 
 <cfif issue EQ "21">
+  <!-- Probe both relative AND webroot-rooted (leading-slash) cfinclude.
+       RustCFML v0.11.0+ resolves leading-slash templates against the
+       webroot rather than OS root, so the Moopa-style "/compatibility/X"
+       include shape is now safe to use. The probe still catches any 500
+       so a regression cannot crash the dashboard. -->
   <cftry>
     <cfsavecontent variable="includedOutput">
       <cfinclude template="_includeFixture.cfm" />
     </cfsavecontent>
+    <cfset absoluteIncludeSafe = false>
+    <cfset absoluteOutput = "">
+    <cftry>
+      <cfsavecontent variable="absoluteOutput">
+        <cfinclude template="/compatibility/_includeFixture.cfm" />
+      </cfsavecontent>
+      <cfset absoluteIncludeSafe = (find("include-ok", absoluteOutput) GT 0)>
+      <cfcatch>
+        <cfset absoluteIncludeSafe = false>
+      </cfcatch>
+    </cftry>
     <cfscript>
       relativeOk = find("include-ok", includedOutput) GT 0;
       fixturePath = getDirectoryFromPath(getCurrentTemplatePath()) & "_includeFixture.cfm";
       fixtureExists = fileExists(fixturePath);
-      status = relativeOk ? "partial" : "fail";
-      summary = status EQ "partial"
-        ? "Relative cfinclude works. Direct leading-slash cfinclude is avoided because RustCFML v0.10.0 treats it as an OS-root path and raises an uncaught 500, so Moopa-style root includes need an adapter."
-        : "cfinclude did not render the fixture template.";
-      jsonResult = serializeJSON({relativeOutput:trim(includedOutput), fixturePath:fixturePath, fixtureExists:fixtureExists, absoluteIncludeSafe:false});
+      if (relativeOk AND absoluteIncludeSafe) {
+        status = "pass";
+        summary = "Both relative and leading-slash cfinclude resolve correctly (leading slash routes via webroot).";
+      } else if (relativeOk) {
+        status = "partial";
+        summary = "Relative cfinclude works, but leading-slash cfinclude did not render the fixture.";
+      } else {
+        status = "fail";
+        summary = "cfinclude did not render the fixture template.";
+      }
+      jsonResult = serializeJSON({relativeOutput:trim(includedOutput), absoluteOutput:trim(absoluteOutput), fixturePath:fixturePath, fixtureExists:fixtureExists, absoluteIncludeSafe:absoluteIncludeSafe});
     </cfscript>
     <cfcatch>
       <cfscript>
         status = "fail";
-        summary = "cfinclude resolution failed.";
+        summary = "cfinclude resolution failed: " & cfcatch.message;
         jsonResult = serializeJSON(cfcatch);
       </cfscript>
     </cfcatch>
