@@ -32,16 +32,7 @@ docker compose down -v
 docker compose up -d --build
 ```
 
-Note: a literal `select * from moo_role` connected successfully but hit a RustCFML deserialization panic on UUID/timestamp columns, so the safe test wraps the row as JSON text:
-
-```sql
-select row_to_json(r)::text as moo_role
-from (
-    select *
-    from moo_role
-    limit 1
-) r
-```
+RustCFML v0.15.0 deserializes the direct UUID/timestamptz smoke query successfully. The compatibility harness still keeps JSON-wrapper and explicit-cast reads as regression-safe fallback patterns for more complex Moopa data shapes.
 
 ## URL rewrite probe
 

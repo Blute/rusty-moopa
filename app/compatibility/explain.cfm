@@ -63,7 +63,7 @@ runTest = structKeyExists(url, "run");
   </cfif>
 
   <cfif issue EQ "06">
-    <div class="panel"><span class="badge">Upstream</span><p>Moopa dynamic CRUD builds parameter structs and passes them with <code>cfqueryparam attributeCollection</code>. RustCFML's tag scanner appears to read explicit <code>value</code> and <code>cfsqltype</code> attributes only. If attributeCollection is unsupported, Moopa saves and updates are blocked unless the DB layer is adapted or RustCFML gains support.</p></div>
+    <div class="panel"><span class="badge">Watch</span><p>Moopa dynamic CRUD builds parameter structs and passes them with <code>cfqueryparam attributeCollection</code>. RustCFML v0.15.0 honours that pattern in the local smoke test, so this is now a protected baseline for save/update compatibility.</p></div>
   </cfif>
 
   <cfif issue EQ "07">
@@ -71,8 +71,7 @@ runTest = structKeyExists(url, "run");
   </cfif>
 
   <cfif issue EQ "08">
-    <div class="panel"><span class="badge">Upstream</span><p>The Rusty database smoke test connected successfully, but direct <code>select * from moo_role</code> hit a RustCFML panic while deserializing UUID/timestamp columns. The safe read workaround is to return JSON text from PostgreSQL and parse later, but production needs robust driver conversion for UUID, timestamptz, date, JSONB, numeric, boolean, and arrays.</p><pre>select row_to_json(r)::text as record
-from (select * from moo_role limit 20) r</pre></div>
+    <div class="panel"><span class="badge">Watch</span><p>RustCFML v0.15.0 deserializes direct PostgreSQL UUID and timestamptz columns in the local smoke test. Keep both the direct read and the JSON-wrapper fallback covered so Moopa can rely on native typed reads while retaining an escape hatch for complex shapes.</p><pre>select id, created_at, name, label from moo_role limit 1</pre></div>
   </cfif>
 
   <cfif issue EQ "09">
@@ -88,11 +87,10 @@ from (select * from moo_role limit 20) r</pre></div>
   </cfif>
 
   <cfif issue EQ "12">
-    <div class="panel"><span class="badge">Upstream</span><p>Lucee modern local scope means unscoped variables inside functions are local. RustCFML v0.10.0 currently behaves like classic mode in CFC methods: unscoped assignment writes to <code>variables</code> and persists after the function call. The function attribute <code>localMode="modern"</code> also appeared to be ignored in our probe.</p><pre>function run() {
+    <div class="panel"><span class="badge">Watch</span><p>Lucee modern local scope means unscoped variables inside functions are local. RustCFML v0.15.0 now passes the local smoke test for both classic and <code>localMode="modern"</code>: classic writes land in <code>variables</code>, while modern writes stay local.</p><pre>function run() localMode="modern" {
   implicitInside = "value";
-  // RustCFML today: variables.implicitInside exists after return
-  // Lucee modern: local.implicitInside only
-}</pre><p>The safe Moopa workaround is to make all touched function variables explicit: <code>local.x</code> for temporary values and <code>variables.x</code> for component state.</p></div>
+  // Expected: local.implicitInside only
+}</pre><p>Moopa should still prefer explicit <code>local.x</code> for temporary values and <code>variables.x</code> for component state to keep intent clear across engines.</p></div>
   </cfif>
 
   <cfif issue EQ "13">
